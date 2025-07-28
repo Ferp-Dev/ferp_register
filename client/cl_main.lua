@@ -321,7 +321,6 @@ RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function()
     CreateThread(function()
         Wait(3000)
         if WaitForSystems() then
-            CreateCashierTargets()
         end
     end)
 end)
@@ -330,7 +329,6 @@ RegisterNetEvent('qbx_core:playerLoaded', function()
     CreateThread(function()
         Wait(3000)
         if WaitForSystems() then
-            CreateCashierTargets()
         end
     end)
 end)
