@@ -8,8 +8,26 @@ local function CalculateCommission(amount)
     return 0
 end
 
--- Event para registrar cobrança (funcionário)
-RegisterNetEvent('cashier:server:registerCharge', function(companyId, amount, description)
+-- Função para obter coordenadas do caixa
+local function GetCashierCoords(companyId, cashierId)
+    local company = Config.Companies[companyId]
+    if not company then return nil end
+    
+    -- Novo formato com múltiplos caixas
+    if company.cashiers then
+        return company.cashiers[cashierId] and company.cashiers[cashierId].coords or nil
+    end
+    
+    -- Formato antigo para compatibilidade
+    if company.coords and cashierId == 1 then
+        return company.coords
+    end
+    
+    return nil
+end
+
+-- Event para registrar cobrança
+RegisterNetEvent('cashier:server:registerCharge', function(companyId, cashierId, amount, description)
     local source = source
     local company = Config.Companies[companyId]
     
@@ -26,28 +44,53 @@ RegisterNetEvent('cashier:server:registerCharge', function(companyId, amount, de
         return
     end
     
-    -- Registrar cobrança para a empresa
-    activeCharges[companyId] = {
+    -- Verificar se o caixa existe
+    local cashierCoords = GetCashierCoords(companyId, cashierId)
+    if not cashierCoords then
+        Framework.Notify(source, _('invalid_cashier'), 'error')
+        return
+    end
+    
+    -- Verificar distância
+    local playerCoords = GetEntityCoords(GetPlayerPed(source))
+    local distance = #(playerCoords - cashierCoords)
+    
+    if distance > Config.Distance.target then
+        Framework.Notify(source, _('too_far_from_cashier'), 'error')
+        return
+    end
+    
+    -- Criar chave única para empresa + caixa
+    local chargeKey = companyId .. '_' .. cashierId
+    
+    -- Registrar cobrança para a empresa/caixa específico
+    activeCharges[chargeKey] = {
+        companyId = companyId,
+        cashierId = cashierId,
         amount = amount,
         description = description,
-        cashierId = source,
-        cashierName = GetPlayerName(source),
-        timestamp = os.time()
+        cashierEmployeeId = source,
+        cashierName = Framework.GetPlayerName(source),
+        timestamp = os.time(),
+        coords = cashierCoords
     }
     
     -- Notificar funcionário
     Framework.Notify(source, _('charge_registered', amount), 'success')
     
-    SetTimeout(Config.Timeout.payment, function()
-        if activeCharges[companyId] and activeCharges[companyId].timestamp == activeCharges[companyId].timestamp then
-            activeCharges[companyId] = nil
-            Framework.Notify(source, _('charge_expired'), 'error')
-        end
-    end)
+        -- Timeout para expirar a cobrança
+        SetTimeout(Config.Timeout.payment, function()
+            if activeCharges[chargeKey] and activeCharges[chargeKey].timestamp == activeCharges[chargeKey].timestamp then
+                activeCharges[chargeKey] = nil
+                if Framework.GetPlayerName(source) then -- Verificar se o jogador ainda está online
+                    Framework.Notify(source, _('charge_expired'), 'error')
+                end
+            end
+        end)
 end)
 
 -- Event para cancelar cobrança
-RegisterNetEvent('cashier:server:cancelCharge', function(companyId)
+RegisterNetEvent('cashier:server:cancelCharge', function(companyId, cashierId)
     local source = source
     local company = Config.Companies[companyId]
     
@@ -59,34 +102,44 @@ RegisterNetEvent('cashier:server:cancelCharge', function(companyId)
         return
     end
     
+    local chargeKey = companyId .. '_' .. cashierId
+    
     -- Verificar se há cobrança ativa
-    if not activeCharges[companyId] then
+    if not activeCharges[chargeKey] then
         Framework.Notify(source, _('no_active_charge'), 'error')
         return
     end
     
     -- Cancelar cobrança
-    activeCharges[companyId] = nil
+    activeCharges[chargeKey] = nil
     Framework.Notify(source, _('charge_cleared_success'), 'success')
 end)
 
-RegisterNetEvent('cashier:server:requestPaymentInfo', function(companyId)
+RegisterNetEvent('cashier:server:requestPaymentInfo', function(companyId, cashierId)
     local source = source
     local company = Config.Companies[companyId]
     
     if not company then return end
     
-    -- Verificar se há cobrança ativa para esta empresa
-    local chargeData = activeCharges[companyId]
+    local chargeKey = companyId .. '_' .. cashierId
+    
+    -- Verificar se há cobrança ativa para esta empresa/caixa
+    local chargeData = activeCharges[chargeKey]
     
     if not chargeData then
-        TriggerClientEvent('cashier:client:showPaymentInfo', source, companyId, nil)
+        TriggerClientEvent('cashier:client:showPaymentInfo', source, companyId, cashierId, nil)
         return
     end
     
-    -- Verificar distância do caixa
+    -- Verificar distância do caixa específico
+    local cashierCoords = GetCashierCoords(companyId, cashierId)
+    if not cashierCoords then
+        Framework.Notify(source, _('invalid_cashier'), 'error')
+        return
+    end
+    
     local playerCoords = GetEntityCoords(GetPlayerPed(source))
-    local distance = #(playerCoords - company.coords)
+    local distance = #(playerCoords - cashierCoords)
     
     if distance > Config.Distance.target then
         Framework.Notify(source, _('too_far_from_cashier'), 'error')
@@ -94,14 +147,15 @@ RegisterNetEvent('cashier:server:requestPaymentInfo', function(companyId)
     end
     
     -- Enviar informações da cobrança para o cliente
-    TriggerClientEvent('cashier:client:showPaymentInfo', source, companyId, chargeData)
+    TriggerClientEvent('cashier:client:showPaymentInfo', source, companyId, cashierId, chargeData)
 end)
 
 -- Event para processar pagamento
-RegisterNetEvent('cashier:server:processPayment', function(companyId, paymentMethod)
+RegisterNetEvent('cashier:server:processPayment', function(companyId, cashierId, paymentMethod)
     local source = source
     local company = Config.Companies[companyId]
-    local chargeData = activeCharges[companyId]
+    local chargeKey = companyId .. '_' .. cashierId
+    local chargeData = activeCharges[chargeKey]
     
     if not company or not chargeData then
         Framework.Notify(source, _('charge_not_found'), 'error')
@@ -109,11 +163,17 @@ RegisterNetEvent('cashier:server:processPayment', function(companyId, paymentMet
     end
     
     local amount = chargeData.amount
-    local cashierId = chargeData.cashierId
+    local cashierEmployeeId = chargeData.cashierEmployeeId
     
-    -- Verificar distância do caixa
+    -- Verificar distância do caixa específico
+    local cashierCoords = GetCashierCoords(companyId, cashierId)
+    if not cashierCoords then
+        Framework.Notify(source, _('invalid_cashier'), 'error')
+        return
+    end
+    
     local playerCoords = GetEntityCoords(GetPlayerPed(source))
-    local distance = #(playerCoords - company.coords)
+    local distance = #(playerCoords - cashierCoords)
     
     if distance > Config.Distance.target then
         Framework.Notify(source, _('too_far_from_cashier'), 'error')
@@ -133,55 +193,57 @@ RegisterNetEvent('cashier:server:processPayment', function(companyId, paymentMet
     if Framework.RemoveMoney(source, paymentMethod, amount) then
         local player = Framework.GetPlayer and Framework.GetPlayer(source)
         local citizenid = player and player.PlayerData and player.PlayerData.citizenid or tostring(source)
-        -- Registrar saída do player no Renewed-Banking apenas se for pagamento no banco/cartão
-        if (paymentMethod == 'bank' or paymentMethod == 'card') and GetResourceState('Renewed-Banking') == 'started' then
-            exports['Renewed-Banking']:handleTransaction(
-                citizenid,
-                'Cashier Payment',
-                amount,
-                chargeData.description or 'Payment at cashier',
-                GetPlayerName(source),
-                company.name,
-                'withdraw'
-            )
-        end
+        
+                -- Registrar saída do player no Renewed-Banking apenas se for pagamento no banco/cartão
+                if (paymentMethod == 'bank' or paymentMethod == 'card') and GetResourceState('Renewed-Banking') == 'started' then
+                    exports['Renewed-Banking']:handleTransaction(
+                        citizenid,
+                        'Cashier Payment',
+                        amount,
+                        chargeData.description or 'Payment at cashier',
+                        Framework.GetPlayerName(source),
+                        company.name,
+                        'withdraw'
+                    )
+                end
 
-        -- Adicionar dinheiro à conta da empresa
-        Framework.AddMoneyToAccount(company.account, amount)
-        -- Registrar transação simples no Renewed-Banking
-        if GetResourceState('Renewed-Banking') == 'started' then
-            exports['Renewed-Banking']:handleTransaction(
-                company.account,
-                'Cashier Payment',
-                amount,
-                chargeData.description or 'Payment at cashier',
-                GetPlayerName(source),
-                company.name,
-                'deposit'
-            )
-        end
+                -- Adicionar dinheiro à conta da empresa
+                Framework.AddMoneyToAccount(company.account, amount)
+                
+                -- Registrar transação simples no Renewed-Banking
+                if GetResourceState('Renewed-Banking') == 'started' then
+                    exports['Renewed-Banking']:handleTransaction(
+                        company.account,
+                        'Cashier Payment',
+                        amount,
+                        chargeData.description or 'Payment at cashier',
+                        Framework.GetPlayerName(source),
+                        company.name,
+                        'deposit'
+                    )
+                end
 
         -- Calcular e dar comissão ao funcionário
         local commission = CalculateCommission(amount)
-        if commission > 0 and GetPlayerName(cashierId) then
-            Framework.AddMoney(cashierId, 'cash', commission)
-            Framework.Notify(cashierId, _('commission_received', commission), 'success')
+        if commission > 0 and Framework.GetPlayerName(cashierEmployeeId) then
+            Framework.AddMoney(cashierEmployeeId, 'cash', commission)
+            Framework.Notify(cashierEmployeeId, _('commission_received', commission), 'success')
         end
 
         -- Notificar cliente
         Framework.Notify(source, _('payment_successful'), 'success')
 
         -- Notificar funcionário sobre o pagamento
-        if GetPlayerName(cashierId) then
-            Framework.Notify(cashierId, _('payment_received', amount, GetPlayerName(source)), 'success')
+        if Framework.GetPlayerName(cashierEmployeeId) then
+            Framework.Notify(cashierEmployeeId, _('payment_received', amount, Framework.GetPlayerName(source)), 'success')
         end
 
         -- Limpar cobrança ativa
-        activeCharges[companyId] = nil
+        activeCharges[chargeKey] = nil
 
         -- Log da transação
         if Config.Debug then
-            print(_('[cashier_debug_payment_processed]', GetPlayerName(source), amount, chargeData.cashierName, company.name))
+            print(_('[cashier_debug_payment_processed]', Framework.GetPlayerName(source), amount, chargeData.cashierName, company.name, 'Caixa #' .. cashierId))
         end
     else
         local errorMsg = paymentMethod == 'cash' and 'insufficient_cash' or 'insufficient_bank'
@@ -189,17 +251,23 @@ RegisterNetEvent('cashier:server:processPayment', function(companyId, paymentMet
     end
 end)
 
--- Exports para outros recursos
-exports('registerCharge', function(companyId, amount, description)
+-- Exports para outros recursos (atualizados para múltiplos caixas)
+exports('registerCharge', function(companyId, cashierId, amount, description)
     local company = Config.Companies[companyId]
     if not company then return false end
     
-    activeCharges[companyId] = {
+    cashierId = cashierId or 1 -- Default para primeiro caixa se não especificado
+    local chargeKey = companyId .. '_' .. cashierId
+    
+    activeCharges[chargeKey] = {
+        companyId = companyId,
+        cashierId = cashierId,
         amount = amount,
         description = description or _('pending_charge'),
-        cashierId = 'system',
+        cashierEmployeeId = 'system',
         cashierName = 'System',
-        timestamp = os.time()
+        timestamp = os.time(),
+        coords = GetCashierCoords(companyId, cashierId)
     }
     
     return true
@@ -209,25 +277,51 @@ exports('getActiveCharges', function()
     return activeCharges
 end)
 
-exports('clearCharge', function(companyId)
-    if activeCharges[companyId] then
-        activeCharges[companyId] = nil
+exports('clearCharge', function(companyId, cashierId)
+    cashierId = cashierId or 1 -- Default para primeiro caixa se não especificado
+    local chargeKey = companyId .. '_' .. cashierId
+    
+    if activeCharges[chargeKey] then
+        activeCharges[chargeKey] = nil
         return true
     end
     return false
 end)
 
+-- Export para obter cobranças de uma empresa específica
+exports('getCompanyCharges', function(companyId)
+    local companyCharges = {}
+    for chargeKey, chargeData in pairs(activeCharges) do
+        if chargeData.companyId == companyId then
+            companyCharges[chargeKey] = chargeData
+        end
+    end
+    return companyCharges
+end)
+
+-- Export para limpar todas as cobranças de uma empresa
+exports('clearCompanyCharges', function(companyId)
+    local cleared = 0
+    for chargeKey, chargeData in pairs(activeCharges) do
+        if chargeData.companyId == companyId then
+            activeCharges[chargeKey] = nil
+            cleared = cleared + 1
+        end
+    end
+    return cleared
+end)
+
 -- Função para limpar cobranças expiradas
 CreateThread(function()
     while true do
-        Wait(60000) -- Verificar a cada minuto
+        Wait(60000)
         
         local currentTime = os.time()
-        for companyId, charge in pairs(activeCharges) do
+        for chargeKey, charge in pairs(activeCharges) do
             if currentTime - charge.timestamp > (Config.Timeout.payment / 1000) then
-                activeCharges[companyId] = nil
+                activeCharges[chargeKey] = nil
                 if Config.Debug then
-                    print(_('[cashier_debug_charge_expired]', companyId))
+                    print(_('[cashier_debug_charge_expired]', charge.companyId, 'Caixa #' .. charge.cashierId))
                 end
             end
         end

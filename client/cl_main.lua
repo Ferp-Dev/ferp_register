@@ -22,33 +22,67 @@ end
 -- Função para criar targets dos caixas
 local function CreateCashierTargets()
     for companyId, company in pairs(Config.Companies) do
-        -- Debug
-        if Config.Debug then
-            print(string.format('[CASHIER-DEBUG] Criando target para %s na posição %s', companyId,
-                tostring(company.coords)))
-        end
+        if company.cashiers then
+            -- Múltiplos caixas
+            for i, cashier in pairs(company.cashiers) do
+                -- Debug
+                if Config.Debug then
+                    print(string.format('[CASHIER-DEBUG] Criando target %d para %s na posição %s', i, companyId,
+                        tostring(cashier.coords)))
+                end
 
-        -- Target único para todos (funcionários e clientes) usando addSphereZone
-        local radius = (company.targetSize and company.targetSize.x) or 0.25
-        exports.ox_target:addSphereZone({
-            coords = company.coords,
-            radius = radius,
-            debug = Config.Debug,
-            name = 'cashier_' .. companyId,
-            options = {
-                {
-                    name = 'cashier_main_' .. companyId,
-                    icon = 'fas fa-cash-register',
-                    label = _('target_cashier'),
-                    onSelect = function()
-                        if Config.Debug then
-                            print('[CASHIER-DEBUG] Target sistema de caixa clicado para: ' .. companyId)
-                        end
-                        OpenMainMenu(companyId)
-                    end
-                }
-            }
-        })
+                -- Target
+                local radius = cashier.radius or 0.25
+                exports.ox_target:addSphereZone({
+                    coords = cashier.coords,
+                    radius = radius,
+                    debug = Config.Debug,
+                    name = 'cashier_' .. companyId .. '_' .. i,
+                    options = {
+                        {
+                            name = 'cashier_main_' .. companyId .. '_' .. i,
+                            icon = 'fas fa-cash-register',
+                            label = _('target_cashier'),
+                            onSelect = function()
+                                if Config.Debug then
+                                    print('[CASHIER-DEBUG] Target sistema de caixa clicado para: ' .. companyId .. ' (caixa #' .. i .. ')')
+                                end
+                                OpenMainMenu(companyId, i, cashier.coords)
+                            end
+                        }
+                    }
+                })
+            end
+        else
+            -- Compatibilidade com formato antigo (single coords)
+            if company.coords then
+                if Config.Debug then
+                    print(string.format('[CASHIER-DEBUG] Criando target para %s na posição %s (formato antigo)', companyId,
+                        tostring(company.coords)))
+                end
+
+                local radius = (company.targetSize and company.targetSize.x) or 0.25
+                exports.ox_target:addSphereZone({
+                    coords = company.coords,
+                    radius = radius,
+                    debug = Config.Debug,
+                    name = 'cashier_' .. companyId,
+                    options = {
+                        {
+                            name = 'cashier_main_' .. companyId,
+                            icon = 'fas fa-cash-register',
+                            label = _('target_cashier'),
+                            onSelect = function()
+                                if Config.Debug then
+                                    print('[CASHIER-DEBUG] Target sistema de caixa clicado para: ' .. companyId)
+                                end
+                                OpenMainMenu(companyId, 1, company.coords)
+                            end
+                        }
+                    }
+                })
+            end
+        end
     end
 
     if Config.Debug then
@@ -57,7 +91,7 @@ local function CreateCashierTargets()
 end
 
 -- Menu principal único
-function OpenMainMenu(companyId)
+function OpenMainMenu(companyId, cashierId, cashierCoords)
     if not exports.ox_lib then
         print(_('[cashier_error_oxlib_unavailable]'))
         return
@@ -83,7 +117,7 @@ function OpenMainMenu(companyId)
         icon = 'fas fa-plus',
         disabled = not isEmployee,
         onSelect = function()
-            OpenChargeMenu(companyId)
+            OpenChargeMenu(companyId, cashierId, cashierCoords)
         end
     })
 
@@ -92,7 +126,7 @@ function OpenMainMenu(companyId)
         title = _('target_make_payment'),
         icon = 'fas fa-credit-card',
         onSelect = function()
-            OpenPaymentMenu(companyId)
+            OpenPaymentMenu(companyId, cashierId, cashierCoords)
         end
     })
 
@@ -112,7 +146,7 @@ function OpenMainMenu(companyId)
                 end)
 
                 if success and alert == 'confirm' then
-                    TriggerServerEvent('cashier:server:cancelCharge', companyId)
+                    TriggerServerEvent('cashier:server:cancelCharge', companyId, cashierId)
                 end
             end
         })
@@ -140,7 +174,7 @@ function OpenMainMenu(companyId)
 end
 
 -- Menu para fazer cobrança
-function OpenChargeMenu(companyId)
+function OpenChargeMenu(companyId, cashierId, cashierCoords)
     if Config.Debug then
         print(_('[cashier_debug_opening_charge_menu]', companyId))
     end
@@ -182,9 +216,9 @@ function OpenChargeMenu(companyId)
 
         if amount and amount > 0 then
             if Config.Debug then
-                print(string.format('[CASHIER-DEBUG] Registrando cobrança: Valor=%s, Descrição=%s', amount, description))
+                print(string.format('[CASHIER-DEBUG] Registrando cobrança: Valor=%s, Descrição=%s, Caixa=%s', amount, description, cashierId))
             end
-            TriggerServerEvent('cashier:server:registerCharge', companyId, amount, description)
+            TriggerServerEvent('cashier:server:registerCharge', companyId, cashierId, amount, description)
         else
             TriggerEvent('ox_lib:notify', {
                 title = _('error'),
@@ -197,17 +231,17 @@ function OpenChargeMenu(companyId)
 end
 
 -- Menu para efetuar pagamento
-function OpenPaymentMenu(companyId)
+function OpenPaymentMenu(companyId, cashierId, cashierCoords)
     if Config.Debug then
         print(_('[cashier_debug_requesting_payment_info]', companyId))
     end
 
     -- Solicitar informações da cobrança do servidor
-    TriggerServerEvent('cashier:server:requestPaymentInfo', companyId)
+    TriggerServerEvent('cashier:server:requestPaymentInfo', companyId, cashierId)
 end
 
 -- Event para receber informações de pagamento do servidor
-RegisterNetEvent('cashier:client:showPaymentInfo', function(companyId, paymentData)
+RegisterNetEvent('cashier:client:showPaymentInfo', function(companyId, cashierId, paymentData)
     if not paymentData then
         TriggerEvent('ox_lib:notify', {
             title = _('pending_charge'),
@@ -244,7 +278,7 @@ RegisterNetEvent('cashier:client:showPaymentInfo', function(companyId, paymentDa
         icon = 'fas fa-money-bill',
         disabled = cashDisabled,
         onSelect = function()
-            ConfirmPayment(companyId, 'cash', paymentData.amount)
+            ConfirmPayment(companyId, cashierId, 'cash', paymentData.amount)
         end
     })
 
@@ -256,7 +290,7 @@ RegisterNetEvent('cashier:client:showPaymentInfo', function(companyId, paymentDa
         icon = 'fas fa-credit-card',
         disabled = bankDisabled,
         onSelect = function()
-            ConfirmPayment(companyId, 'bank', paymentData.amount)
+            ConfirmPayment(companyId, cashierId, 'bank', paymentData.amount)
         end
     })
 
@@ -283,7 +317,7 @@ RegisterNetEvent('cashier:client:showPaymentInfo', function(companyId, paymentDa
 end)
 
 -- Função para confirmar pagamento
-function ConfirmPayment(companyId, paymentMethod, amount)
+function ConfirmPayment(companyId, cashierId, paymentMethod, amount)
     local methodText = paymentMethod == 'cash' and _('pay_cash'):lower() or _('pay_bank'):lower()
 
     local success, alert = pcall(function()
@@ -308,7 +342,7 @@ function ConfirmPayment(companyId, paymentMethod, amount)
         if Config.Debug then
             print(_('[cashier_debug_processing_payment]', amount, paymentMethod))
         end
-        TriggerServerEvent('cashier:server:processPayment', companyId, paymentMethod)
+        TriggerServerEvent('cashier:server:processPayment', companyId, cashierId, paymentMethod)
     else
         if Config.Debug then
             print(_('[cashier_debug_payment_cancelled]'))

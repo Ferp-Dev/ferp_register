@@ -130,9 +130,9 @@ elseif Config.Framework == 'qbx_core' then
     end
     
     Framework.AddMoneyToAccount = function(account, amount)
-        -- QBX Management - Tentar diferentes métodos
+        -- QBX Management 
         if GetResourceState('qbx_management') == 'started' then
-            -- Método 1: Tentar AddJobMoney (mais comum no QBX)
+            -- Método 1: Tentar AddJobMoney
             local success1, result1 = pcall(function()
                 return exports['qbx_management']:AddJobMoney(account, amount)
             end)
@@ -178,9 +178,9 @@ elseif Config.Framework == 'qbx_core' then
     end
     
     Framework.RemoveMoneyFromAccount = function(account, amount)
-        -- QBX Management - Tentar diferentes métodos
+        -- QBX Management
         if GetResourceState('qbx_management') == 'started' then
-            -- Método 1: Tentar RemoveJobMoney (mais comum no QBX)
+            -- Método 1:  RemoveJobMoney
             local success1, result1 = pcall(function()
                 return exports['qbx_management']:RemoveJobMoney(account, amount)
             end)
@@ -189,7 +189,7 @@ elseif Config.Framework == 'qbx_core' then
                 return true
             end
             
-            -- Método 2: Tentar RemoveMoney diretamente
+            -- Método 2:  RemoveMoney diretamente
             local success2, result2 = pcall(function()
                 return exports['qbx_management']:RemoveMoney(account, amount)
             end)
@@ -198,7 +198,7 @@ elseif Config.Framework == 'qbx_core' then
                 return true
             end
             
-            -- Método 3: Tentar RemoveGangMoney (se for gang)
+            -- Método 3: RemoveGangMoney (se for gang)
             local success3, result3 = pcall(function()
                 return exports['qbx_management']:RemoveGangMoney(account, amount)
             end)
@@ -226,9 +226,7 @@ elseif Config.Framework == 'qbx_core' then
     end
     
     Framework.GetAccountMoney = function(account)
-        -- QBX Management - Tentar diferentes métodos
         if GetResourceState('qbx_management') == 'started' then
-            -- Método 1: Tentar GetJobMoney
             local success1, result1 = pcall(function()
                 return exports['qbx_management']:GetJobMoney(account)
             end)
@@ -237,7 +235,6 @@ elseif Config.Framework == 'qbx_core' then
                 return result1
             end
             
-            -- Método 2: Tentar GetAccount
             local success2, result2 = pcall(function()
                 return exports['qbx_management']:GetAccount(account)
             end)
@@ -246,7 +243,6 @@ elseif Config.Framework == 'qbx_core' then
                 return result2
             end
             
-            -- Método 3: Tentar GetGangMoney
             local success3, result3 = pcall(function()
                 return exports['qbx_management']:GetGangMoney(account)
             end)
@@ -374,4 +370,58 @@ Framework.GetMoneyLabel = function(moneyType)
         bank = 'Banco/Cartão'
     }
     return labels[moneyType] or 'Desconhecido'
+end
+
+-- Função para obter nome do personagem
+Framework.GetPlayerName = function(source)
+    if Config.Framework == 'qb-core' then
+        local Player = exports['qb-core']:GetCoreObject().Functions.GetPlayer(source)
+        if Player and Player.PlayerData and Player.PlayerData.charinfo then
+            return Player.PlayerData.charinfo.firstname .. ' ' .. Player.PlayerData.charinfo.lastname
+        end
+    elseif Config.Framework == 'qbx_core' then
+        local Player = exports.qbx_core:GetPlayer(source)
+        if Player and Player.PlayerData and Player.PlayerData.charinfo then
+            return Player.PlayerData.charinfo.firstname .. ' ' .. Player.PlayerData.charinfo.lastname
+        end
+    end
+    
+    -- Fallback para GetPlayerName nativo (Steam)
+    return GetPlayerName(source) or 'Desconhecido'
+end
+
+-- Função para verificar se empresa tem múltiplos caixas
+Framework.HasMultipleCashiers = function(companyId)
+    local company = Config.Companies[companyId]
+    if not company then return false end
+    
+    return company.cashiers and #company.cashiers > 1
+end
+
+-- Função para obter total de caixas de uma empresa
+Framework.GetCashierCount = function(companyId)
+    local company = Config.Companies[companyId]
+    if not company then return 0 end
+    
+    if company.cashiers then
+        return #company.cashiers
+    elseif company.coords then
+        return 1
+    end
+    
+    return 0
+end
+
+-- Função para validar se o ID do caixa é válido
+Framework.ValidateCashierId = function(companyId, cashierId)
+    local company = Config.Companies[companyId]
+    if not company then return false end
+    
+    if company.cashiers then
+        return cashierId >= 1 and cashierId <= #company.cashiers
+    elseif company.coords then
+        return cashierId == 1
+    end
+    
+    return false
 end
